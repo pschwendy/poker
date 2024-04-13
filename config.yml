@@ -1,0 +1,11 @@
+poker:
+  training:
+    enabled: true
+    data_path: /path/to/training/data
+    model_path: /path/to/save/model
+    rounds: 100
+    batch_size: 32
+    learning_rate: 0.001
+    small_blind: 10
+    big_blind: 20
+    
