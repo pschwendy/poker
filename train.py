@@ -22,6 +22,7 @@ import itertools
 
 from deck import Deck
 from bots.base import PokerBase
+from bots.state import State, Round
 
 import yaml
 
@@ -32,36 +33,88 @@ class PokerGame:
         self.deck._shuffle()
         
         self.table = []
-        self.playback = []
+        self.state = State()
 
-        self.pot = 0
         self.small_blind = 1
         self.big_blind = 2
-        self.round = 0
     
-    def deal(self, n):
+    def deal(self):
         for i in range(2):
             for bot in self.bots:
                 bot.add_card(self.deck.deal_one(), i)
     
     def betting_round(self):
-        top_bet = np.array([0])
+        index = 0
+        while not self.state.end_round():
+            index += 1
+            index %= len(self.bots)
 
-        for bot in self.bots:
+            bot = self.bots[index]
+
             if not bot.play:
                 continue
 
-            action = bot.forward(self.playback, top_bet)
+            action = bot.forward(self.state)
             
             if action[0] == 0: # Fold
                 bot.play = False
-            elif action[0] == 2: # Call
-                self.pot += action[1]
-            elif action[0] == 2: # Raise
-                self.pot += action[1]
-                top_bet = action[1]
             
-            self.playback.append(action)
+            self.state.update(action)
+        
+    def next_round(self):
+        # Finish round
+        if self.state.round == Round.PREFLOP:
+            table += self.deck.deal(3)
+        else:
+            table += self.deck.deal()
+        
+    
+    def play(self):
+        for bot in self.bots:
+            bot.play = True
+        
+        self.deal()
+        self.betting_round()
+        
+        self.next_round()
+        self.betting_round()
+        
+        self.next_round()
+        self.betting_round()
+        
+        self.next_round()
+        self.betting_round()
+        
+        # Evaluate winner
+        eval_cards = [bot.get_eval_card() for bot in self.bots]
+        eval_table = EvaluationCard.new(self.table)
+        
+        for bot, eval_card in zip(self.bots, eval_cards):
+            eval_card.evaluate(eval_table)
+        
+        # Update money
+        winner = max(self.bots, key=lambda bot: bot.eval_card)
+        winner.money += self.state.pot
+        
+        for bot in self.bots:
+            if bot != winner:
+                bot.money -= self.state.pot
+        
+        self.state = State()
+        self.table = []
+        
+        return winner
+    
 
+def objective_function():
+    pass
 
+def train():
+    pass
+
+def main():
+    pass
+
+if __name__ == "__main__":
+    main()
     

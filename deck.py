@@ -17,7 +17,7 @@ class Deck:
     def _shuffle(self):
         np.random.shuffle(self._deck)
 
-    def deal(self, n):
+    def deal(self, n=1):
         cards = self._deck[self.pos:n]
 
         return cards
