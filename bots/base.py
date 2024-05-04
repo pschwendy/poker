@@ -6,6 +6,14 @@ from torch import nn
 from actions import Action
 from state import State, MiniState
 
+"""
+Basic strategy:
+- Bet with pair
+- Probabilistic winning (maybe game theory?)
+- Bluffer (inverse of probabilistic winning)
+- Fish for a flush
+"""
+
 class PokerBase(nn.Module):
     def __init__(self):
         super(PokerBase, self).__init__()

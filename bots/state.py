@@ -11,12 +11,13 @@ class Round(Enum):
 
 class Turn:
     def __init__(self):
-        self.actions = [] # List of actions on table during player turn
+        # self.actions = [] # List of actions on table during player turn
+        self.action = Action()
         self.top_bet = 0
         self.index = 0
     
     def update(self, action: Action) -> int:        
-        self.actions.append(action)
+        self.action = action
 
         self.index += 1
         self.index %= len(self.bets)
