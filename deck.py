@@ -1,7 +1,7 @@
 import numpy as np
 
 class Deck:
-    _ranks = [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]
+    _ranks = range(13)
     _suits = [1, 2, 3, 4]
 
     def __init__(self):
@@ -18,14 +18,13 @@ class Deck:
         np.random.shuffle(self._deck)
 
     def deal(self, n=1):
-        cards = self._deck[self.pos:n]
-
+        cards = self._deck[self.pos: self.pos + n].tolist()
+        self.pos += n
         return cards
     
     def deal_one(self):
         card = self._deck[self.pos]
         self.pos += 1
-
         return card
     
     def burn(self):

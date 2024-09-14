@@ -3,7 +3,7 @@
 # Lookup Table for quick hand evaluation
 
 import itertools
-from eval_card import EvaluationCard
+from evaluation.eval_card import EvaluationCard
 
 class LookupTable(object):
     """

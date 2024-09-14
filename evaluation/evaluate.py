@@ -1,8 +1,8 @@
 
 import itertools
 
-from eval_card import EvaluationCard
-from lookup import LookupTable
+from evaluation.eval_card import EvaluationCard
+from evaluation.lookup import LookupTable
 
 
 class Evaluator(object):

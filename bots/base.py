@@ -3,8 +3,9 @@
 import numpy as np
 from torch import nn
 
-from actions import Action
-from state import State, MiniState
+from bots.action import Action
+from bots.state import State, MiniState
+from evaluation.card import Card
 
 """
 Basic strategy:
@@ -29,6 +30,12 @@ class PokerBase(nn.Module):
     def add_card(self, card, index):
         self.cards[index] = card
 
+    def get_eval_cards(self):
+        return [Card(self.cards[0]).get_eval_card(), Card(self.cards[1]).get_eval_card()]
+
+    def get_cards(self):
+        return [Card(self.cards[0]), Card(self.cards[1])]
+        
     def forward(self, x: State):
         """
         x: State

@@ -21,8 +21,12 @@ import numpy as np
 import itertools
 
 from deck import Deck
-from bots.base import PokerBase
+from bots.simple import SimpleBot
 from bots.state import State, Round
+from evaluation.card import Card
+from evaluation.eval_card import EvaluationCard
+from evaluation.lookup import LookupTable
+from evaluation.evaluate import Evaluator
 
 import yaml
 
@@ -55,8 +59,15 @@ class PokerGame:
                 continue
 
             action = bot.forward(self.state)
+
+            if action.type == 2: # Raise
+                print(f"Bot {index} raised {action.bet}")
+            elif action.type == 1: # Call
+                print(f"Bot {index} called {action.bet}")
+            else: # Fold
+                print(f"Bot {index} folded")
             
-            if action[0] == 0: # Fold
+            if action.type == 0: # Fold
                 bot.play = False
             
             self.state.update(action)
@@ -64,46 +75,69 @@ class PokerGame:
     def next_round(self):
         # Finish round
         if self.state.round == Round.PREFLOP:
-            table += self.deck.deal(3)
+            self.table += self.deck.deal(3)
         else:
-            table += self.deck.deal()
+            self.table += self.deck.deal()
+        self.state.finish_round(table=self.table)
+        print([Card(c) for c in self.table])
         
     
     def play(self):
+        print("=========Starting game=========")
         for bot in self.bots:
             bot.play = True
         
         self.deal()
         self.betting_round()
-        
         self.next_round()
-        self.betting_round()
+        print("Pot is", self.state.pot)
+
+        print("==============Flop==============")
         
+        self.betting_round()
         self.next_round()
-        self.betting_round()
+        print("Pot is", self.state.pot)
+
+        print("==============Turn==============")
         
+        self.betting_round()
         self.next_round()
-        self.betting_round()
+        print("Pot is", self.state.pot)
+
+        print("=============River==============")
         
+        self.betting_round()
+        self.state.finish_round(self.table)
+        print("Pot is", self.state.pot)
+
+    
         # Evaluate winner
-        eval_cards = [bot.get_eval_card() for bot in self.bots]
-        eval_table = EvaluationCard.new(self.table)
+        eval_cards = [bot.get_eval_cards() for bot in self.bots if bot.play]
+        eval_table = [Card(c).get_eval_card() for c in self.table]
+
         
-        for bot, eval_card in zip(self.bots, eval_cards):
-            eval_card.evaluate(eval_table)
-        
+        evals = [Evaluator().evaluate(eval_card, eval_table) for eval_card in eval_cards]
+
+
+        print("=========Summary=========")
+        print("Bots had the following cards:")
+        print([bot.get_cards() for bot in self.bots])
+
+        print("The winner had:")
+        print(self.bots[evals.index(min(evals))].get_cards())
+
         # Update money
-        winner = max(self.bots, key=lambda bot: bot.eval_card)
-        winner.money += self.state.pot
-        
-        for bot in self.bots:
-            if bot != winner:
-                bot.money -= self.state.pot
+        win_index = evals.index(min(evals))
+        print(f"Bot {win_index} wins the pot")
+        self.bots[win_index].money += self.state.pot
         
         self.state = State()
         self.table = []
+
+        for i, bot in enumerate(self.bots):
+            print(f"Bot {i} has {bot.money}")
         
-        return winner
+        return self.bots[win_index]
     
 
 def objective_function():
@@ -113,7 +147,9 @@ def train():
     pass
 
 def main():
-    pass
+    bots = [SimpleBot() for _ in range(6)]
+    game = PokerGame(bots)
+    game.play()
 
 if __name__ == "__main__":
     main()
