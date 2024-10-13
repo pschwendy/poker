@@ -43,9 +43,9 @@ class PokerGame:
         self.big_blind = 2
     
     def deal(self):
-        for i in range(2):
+        for _ in range(2):
             for bot in self.bots:
-                bot.add_card(self.deck.deal_one(), i)
+                bot.add_card(self.deck.deal_one())
     
     def betting_round(self):
         index = 0
@@ -121,10 +121,10 @@ class PokerGame:
 
         print("=========Summary=========")
         print("Bots had the following cards:")
-        print([bot.get_cards() for bot in self.bots])
+        print([bot.cards for bot in self.bots])
 
         print("The winner had:")
-        print(self.bots[evals.index(min(evals))].get_cards())
+        print(self.bots[evals.index(min(evals))].cards)
 
         # Update money
         win_index = evals.index(min(evals))

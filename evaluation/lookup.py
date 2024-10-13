@@ -1,5 +1,5 @@
 
-# https://github.com/keithlee96/pluribus-poker-AI/blob/develop/poker_ai/poker/evaluation/lookup.py
+# Copied from https://github.com/keithlee96/pluribus-poker-AI/blob/develop/poker_ai/poker/evaluation/lookup.py
 # Lookup Table for quick hand evaluation
 
 import itertools

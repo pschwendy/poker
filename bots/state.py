@@ -1,5 +1,5 @@
 import numpy as np
-from bots.action import Action
+from bots.action import Action, ActionType
 from enum import IntEnum
 
 # class syntax
@@ -11,23 +11,18 @@ class Round(IntEnum):
 
 class Turn:
     def __init__(self, top_bet):
-        # self.actions = [] # List of actions on table during player turn
         self.action = Action()
         self.top_bet = top_bet
-        # self.index = 0
     
     def update(self, action: Action) -> int:        
         self.action = action
-
-        # self.index += 1
-        # self.index %= len(self.bets)
-
+        
         t = action.type
-        if t == 0: # Fold
+        if t == ActionType.FOLD:
             return 0
-        elif t == 1: # Call
+        elif t == ActionType.CALL:
             return self.top_bet
-        elif t == 2: # Raise
+        elif t == ActionType.RAISE:
             b = action.bet
             return b
 
@@ -43,33 +38,39 @@ class MiniState:
     def __init__(self, table, players_left, n_players) -> None:
         self.table = table # cards on table
 
-        # Question - Should we track history as 1d list of bets or 2d history of bet states?
         self.history = [] # List of Turns
         self.n_players = n_players
+        
+        # We know the round is over when folded + called = players_left
         self.players_left = players_left
         self.folded = 0
+        self.called = 0
+
         self.pot = 0
         self.top_bet = 0
     
     def update(self, action: Action) -> None:
+        """Update the state of the game with the given action"""
         self.history.append(Turn(self.top_bet))
         
+        # update the latest Turn and pot
         bet = self.history[-1].update(action)
         self.pot += bet
         self.top_bet = max(self.top_bet, bet)
 
-        if action.type == 0: self.folded += 1
-        if action.type == 2: self.update_backlog()
+        if action.type == ActionType.FOLD: self.folded += 1
+        if action.type == ActionType.CALL: self.called += 1
+        if action.type == ActionType.RAISE: self.update_backlog()
     
     def update_backlog(self) -> None:
+        """Reset folded and called players"""
         self.players_left -= self.folded
         self.folded = 0
-
-    def raised_once(self) -> int:
-        return [turn.action.type == 2 for turn in self.history[-self.players_left:]].count(True)
+        self.called = 0
     
     def end_round(self) -> bool:
-        return len(self.history) >= self.players_left and self.raised_once() # some logic to determine if round is over
+        """Called every time a player makes an action to check if the round is over"""
+        return self.called + self.folded == self.players_left
 
 
 class State:
@@ -81,15 +82,17 @@ class State:
         - pot
         - could have history of actions
     """
-    def __init__(self) -> None:
+    def __init__(self, n_players=6) -> None:
         self.pot = 0
 
-        self.total_players = 6
-        self.active = 6 # number of active players
+        self.total_players = n_players
+        self.active = n_players
+
         self.mini_states = [MiniState(np.zeros((5, 2)), self.active, self.total_players)]
         self.round = Round.PREFLOP
 
     def finish_round(self, table):
+        """Called at end of each round. Updates the pot and creates a new mini state"""
         self.round += 1
         self.pot += self.mini_states[-1].pot
         self.mini_states.append(MiniState(table, self.active, self.total_players))
