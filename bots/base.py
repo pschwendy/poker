@@ -19,10 +19,10 @@ Basic strategy:
 
 # Not sure if we need to derive from nn.Module
 class PokerBase():
-    def __init__(self):
+    def __init__(self, start_money: int = 1000):
         # super(PokerBase, self).__init__()
         # start with 1000 money
-        self.money = 1000
+        self.money = start_money
 
         # Change to False when bot folds
         self.play = True
@@ -32,6 +32,7 @@ class PokerBase():
     
     def __call__(self, *args: Any, **kwds: Any) -> Any:
         return self.forward(*args, **kwds)
+    
     @property
     def money(self):
         return self._money

@@ -1,4 +1,5 @@
 
+# Copied from https://github.com/keithlee96/pluribus-poker-AI/blob/develop/poker_ai/poker/evaluation/evaluator.py
 import itertools
 
 from evaluation.eval_card import EvaluationCard

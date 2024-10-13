@@ -16,7 +16,7 @@ class Turn:
     
     def update(self, action: Action) -> int:        
         self.action = action
-        
+
         t = action.type
         if t == ActionType.FOLD:
             return 0
@@ -53,7 +53,6 @@ class MiniState:
         """Update the state of the game with the given action"""
         self.history.append(Turn(self.top_bet))
         
-        # update the latest Turn and pot
         bet = self.history[-1].update(action)
         self.pot += bet
         self.top_bet = max(self.top_bet, bet)
