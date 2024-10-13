@@ -19,6 +19,7 @@ class SimpleBot(PokerBase):
     def forward(self, state: State):
         action = Action()
 
+        # If no one has bet yet, simple bot raises 100
         if len(state.mini_states[-1].history) == 0:
             action.type = ActionType.RAISE
         else:
