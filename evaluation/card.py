@@ -26,8 +26,11 @@ class Card:
         4: "Clubs"
     }
     
-    def __init__(self, card):
-        self._card = card
+    def __init__(self, card, from_encode=False):
+        if from_encode:
+            self._card = np.array([card % 13, card // 13 + 1])
+        else:
+            self._card = card
 
     def __str__(self):
         rank = self._INT_RANK_TO_STR[self._card[0]]
@@ -44,6 +47,9 @@ class Card:
 
     def suit(self):
         return self._INT_SUIT_TO_STR[self._card[1]]
+    
+    def encode(self):
+        return int(self._card[0] + 13 * (self._card[1] - 1))
     
     def __eq__(self, other):
         return self._card == other._card

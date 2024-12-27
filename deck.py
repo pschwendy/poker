@@ -22,6 +22,10 @@ class Deck:
         self.pos += n
         return cards
     
+    def simulate_deal(self, n=5):
+        cards = self._deck[self.pos: self.pos + n].tolist()
+        return cards
+    
     def deal_one(self):
         card = self._deck[self.pos]
         self.pos += 1
