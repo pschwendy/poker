@@ -9,10 +9,8 @@ from enum import IntEnum
 from deck import Deck
 from evaluation.card import Card
 
-
 START_MONEY = 10000
 
-# class syntax
 class Round(IntEnum):
     PREFLOP = 0
     FLOP = 1
@@ -80,7 +78,6 @@ class MiniState:
         self.table = table # cards on table
 
         self.action_history = [] # List of Actions
-        self.money_history = [] # List of money
 
         self.n_players = n_players
         
@@ -122,7 +119,6 @@ class MiniState:
             self.pot += action.bet
             action.bet /= global_pot  
         
-        self.money_history.append(self.build_money_vector(bots))
         self.action_history.append(action)
 
         # blinds do not count as part of the round
@@ -150,13 +146,8 @@ class MiniState:
         build_str = f"MiniState: pot={self.pot}, top_bet={self.top_bet}\n"
         build_str += f"Table: {self.table}\n"
         build_str += f"Action history: \n"
-        
         for i, action in enumerate(self.action_history):
-            build_str += f"Player {i}: {action.__str__()}\n"
-        build_str += f"Money history: \n"
-        
-        for i, money in enumerate(self.money_history):
-            build_str += f"Player {i}: {money}\n"
+            build_str += f"Player {(self.start_player + i) % self.total_players}: {bot.__str__()}\n"
         
         return build_str
 
@@ -204,7 +195,7 @@ class State:
         self.depth = 0
 
     def board_size(self):
-        return self.max_round_size + 1
+        return self.num_rounds + 1
 
     def finish_round(self):
         """Called at end of each round. Updates the pot and creates a new mini state"""

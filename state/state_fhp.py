@@ -77,7 +77,6 @@ class MiniState:
         self.table = table # cards on table
 
         self.action_history = [] # List of Actions
-        self.money_history = [] # List of money
 
         self.n_players = n_players
         
@@ -100,10 +99,6 @@ class MiniState:
         """Encodes the action history"""
         return np.array([self.encode_single_action(action) for action in self.action_history] + [np.zeros(1) for _ in range(7 - len(self.action_history))])
 
-    def encode_money(self) -> np.array:
-        """Encodes the money history"""
-        return np.array([np.zeros(self.n_players * 2) for _ in range(7 - len(self.money_history))] + self.money_history)
-
     def update(self, action: Action, bots, curr_player, global_pot, blind=False) -> None:
         """Update the state of the game with the given action"""
 
@@ -121,8 +116,7 @@ class MiniState:
             self.top_bet = max(self.top_bet, bots[curr_player].current_bet)
             self.pot += action.bet
             action.bet /= global_pot  
-        
-        self.money_history.append(self.build_money_vector(bots))
+
         self.action_history.append(action)
 
         # blinds do not count as part of the round
@@ -150,13 +144,8 @@ class MiniState:
         build_str = f"MiniState: pot={self.pot}, top_bet={self.top_bet}\n"
         build_str += f"Table: {self.table}\n"
         build_str += f"Action history: \n"
-        
         for i, action in enumerate(self.action_history):
             build_str += f"Player {i}: {action.__str__()}\n"
-        build_str += f"Money history: \n"
-        
-        for i, money in enumerate(self.money_history):
-            build_str += f"Player {i}: {money}\n"
         
         return build_str
 

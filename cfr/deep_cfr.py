@@ -231,14 +231,14 @@ class MCCFR():
 
             return (u * policy).sum()
         
-    def optimize(self, M_Vp: ValueDataset, steps: int, T: int):
+    def optimize(self, M_Vp: ValueDataset, T: int, steps: int, batch_size: int):
         self.value_net = BrownNet(n_card_types=2, n_bets=7, n_actions=3, dim=64).to(self.device)
         M_Vp.setup()
         self.value_net.train()
         step = 0
         losses = []
 
-        loader = torch.utils.data.DataLoader(M_Vp, batch_size=10000, shuffle=True) # TODO: return to 10000
+        loader = torch.utils.data.DataLoader(M_Vp, batch_size=batch_size, shuffle=True)
 
         # Reinitialize optimizer
         self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
