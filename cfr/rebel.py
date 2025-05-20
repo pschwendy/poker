@@ -203,6 +203,33 @@ class ReBeL():
         if bot_idx == win_index: return state.pot - player.total_bet
         else: return -player.total_bet
 
+    def win_vs_hand(self, board, hand):
+        win = np.zeros(26 * 51)
+        evaluator = Evaluator()
+        
+        eval_cards = [c.get_eval_card() for c in hand]
+        eval_board = [c.get_eval_card() for c in board]
+        hand_val = evaluator.evaluate(eval_cards, eval_board)
+
+        board = [c.encode() for c in board]
+        known_cards = set([c.encode() for c in hand] + board)
+        open_cards = list(set(range(52)) - known_cards)
+        remaining_hands = list(itertools.combinations(open_cards, 2))
+        
+
+        eval_hands = [[Card(c, from_encode=True).get_eval_card() for c in h] for h in remaining_hands]
+        remaining_vals = np.array([evaluator.evaluate(h, eval_board) for h in eval_hands])
+
+        wins = (remaining_vals > hand_val).astype(float)
+        ties = (remaining_vals == hand_val).astype(float)
+
+        encoded_hands = [self.encode_hand(hand) for hand in remaining_hands]
+
+        win[encoded_hands] = np.where(wins, 1, -1)
+        win[encoded_hands] = np.where(ties, 0, win[encoded_hands])
+
+        return win
+        
     def belief_utility(self, state: State, bot_idx: int):
         pass
 
