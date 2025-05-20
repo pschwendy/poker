@@ -213,7 +213,13 @@ class ReBeL():
         Perform a rollout from the current state and set the leaf values
         """
         if state.is_terminal(): # find actual belief values, oh boy
-            pass
+            board = [Card(c) for c in state.table]
+            known_cards = set(board)
+            open_cards = list(set(range(52)) - known_cards)
+            remaining_hands = list(itertools.combinations(open_cards, 2))
+
+            for i in range(len(remaining_hands)): # runs ~ 1070190 evaluations every time X(
+                win = self.win_vs_hand(board, i)
 
         if is_leaf:
             x = state.to_dict()
@@ -344,13 +350,7 @@ class ReBeL():
         Perform a rollout from the current state and set the leaf values
         """
         if state.is_terminal(): # find actual belief values, oh boy
-            board = [Card(c) for c in state.table]
-            known_cards = set(board)
-            open_cards = list(set(range(52)) - known_cards)
-            remaining_hands = list(itertools.combinations(open_cards, 2))
-
-            for i in range(len(remaining_hands)): # runs ~ 1070190 evaluations every time X(
-                win = self.win_vs_hand(board, i)
+            return
 
         if is_leaf:
             return
