@@ -260,9 +260,12 @@ class State:
         self.pot += self.mini_states[-1].pot
         self.curr_player = (self.curr_player + 1) % self.total_players
 
-        if self.end_round(): self.finish_round()
-
         self.depth += 1
+
+        # if self.end_round(): 
+        #     # self.finish_round()
+        #     return True
+        return self.end_round()
 
     def round_to_str(self):
         return ["PREFLOP", "FLOP", "TURN", "RIVER"][int(self.round)]

@@ -160,6 +160,12 @@ class MCCFR():
         if bot_idx == win_index: return state.pot - player.total_bet
         else: return -player.total_bet
 
+    def update_state(self, state: State, action: Action):
+        """Update state with action taken by player"""
+        er = state.update(action, self.bot_hands, state.curr_player, state.pot)
+        if er: state.finish_round()
+
+        
     @torch.no_grad()
     def traverse(self, state: State, player_idx: int, M_Vp: ValueDataset, t: int):
         """Rough Training algorithm from Deep MCCFR paper: https://arxiv.org/pdf/1811.00164
@@ -230,7 +236,84 @@ class MCCFR():
             M_Vp.append(x, regret, t)
 
             return (u * policy).sum()
+    
+    def adaptive_traverse(self, state, values, action, player_idx):
+        """
+        Adaptive (exploiting) unsafe subgame solving: Skews policy distribution according 
+        to by solving subgame according predicted behavior of opponent and predicted values
         
+        Notes: This is quick to solve and can be used in addition to safe subgame solving
+        with a stronger value network V_theta* from the safe subgame solving as opposed to V_theta
+        --------------------
+        Args:
+            state s: current state of game
+            values: most recent predicted values
+            action a: last action taken by player_idx
+            player_idx: idx of current player (NOT the opponent)
+
+        Neural Network Params:
+            theta: value network parameters
+            phi: behavior prediction parameters
+
+        Traversal Algorithm:
+        if terminal(s) OR depth exceeded: return values[a], R+(values) # from most recent action a* taken by player
+        if player at s != player_idx:
+            policy = policy_phi(s) # predict opponent behavior via self-supervised predictor
+            init u \in R^a
+            int Pi \in R^{axa}
+            for a in A(s):
+                s' = apply(s, a)
+                u[a], Pi[a] = adaptive_solve(s', values, player_idx) # where Pi[a] refers to the ath column
+            return sum(u * policy), Pi^T @ u
+        else: # player at s == player_idx
+            values = V_theta(s)
+            init u \in R^a
+            int Pi \in R^{axa}
+            for a in A(s):
+                s' = apply(s, a)
+                u[a], Pi[a] = adaptive_solve(s', values, player_idx) # where Pi[a] refers to the ath column
+            return mean(Pi^T @ u), R+(u)
+        """
+        if state.is_terminal():
+            return values[action], self.target_policy(values)
+        elif state.curr_player != player_idx: # opponent's turn
+            x = state.to_dict()
+            policy = self.behavior_pred(x)
+            agg_policy = self.aggregation_func(state, policy).to(self.device)
+            
+            u = torch.zeros(agg_policy.shape)
+            Pi = torch.zeros((agg_policy.shape, agg_policy.shape))
+            for a in range(agg_policy.shape):
+                s_prime = state
+                act = self.choice_to_action(state, a)
+                s_prime.update(act)
+                u_a, Pi_a = self.adaptive_solve(s_prime, values, action, player_idx)
+                u[a] = u_raise
+                Pi[a] = Pi_a
+            return (u * agg_policy).sum(), Pi_a.transpose(0, 1) @ u
+        else: # your turn
+            values = self.value_net(x)
+            
+            u = torch.zeros(agg_policy.shape)
+            Pi = torch.zeros((agg_policy.shape, agg_policy.shape))
+            for a in range(agg_policy.shape):
+                s_prime = state
+                act = self.choice_to_action(state, a)
+                s_prime.update(act)
+                u_a, Pi_a = self.adaptive_solve(s_prime, values, action, player_idx)
+                u[a] = u_raise
+                Pi[a] = Pi_a
+            return (Pi_a.transpose(0, 1) @ u).mean(), self.target_policy(u)
+                
+    def adaptive_solve(self, state, player_idx, T):
+        # TODO: set state to randomized remaining cards dealing
+        policies = []
+        for t in range(T):
+            policy_t = self.adaptive_traverse(state, torch.zeros(3), 0, player_idx)
+            policies.append(policy_t)
+        policy = torch.stack(policies).mean(dim=0)
+        return policy
+
     def optimize(self, M_Vp: ValueDataset, T: int, steps: int, batch_size: int):
         self.value_net = BrownNet(n_card_types=2, n_bets=7, n_actions=3, dim=64).to(self.device)
         M_Vp.setup()
