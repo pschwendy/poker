@@ -348,9 +348,9 @@ class ReBeL():
             while policy.sum(dim=0)[action_taken] == 0:
                 action_taken += 1
 
-            reach_prob = reach_prob * self.subgame.avg_reach_strategy_table[node_idx][:, i]
-            reach_prob /= reach_prob.sum()
-            rollout_and_set_leaf_values(nodes_to_visit[i].state, player_idx, children_start + i, is_leaf=leaf_yn[i])
+            reach_prob_prime = reach_prob * self.subgame.avg_reach_strategy_table[node_idx][:, i]
+            reach_prob_prime /= reach_prob_prime.sum()
+            rollout_and_set_leaf_values(nodes_to_visit[i].state, reach_prob_prime, player_idx, children_start + i, is_leaf=leaf_yn[i])
 
     # Should be fixed?
     def compute_ev_regret(self, state: State, node_idx, is_leaf):
@@ -409,7 +409,7 @@ class ReBeL():
         self.subgame.value_table = torch.stack(self.subgame.value_table).to(self.device)
 
 
-    def rollout_and_add_training_samples(self, state: State, M_Pi, player_idx, node_idx, is_leaf):
+    def rollout_and_add_training_samples(self, state: State, reach_prob, M_Pi, player_idx, node_idx, is_leaf):
         """
         Perform a rollout from the current state and set the leaf values
         """
@@ -445,23 +445,33 @@ class ReBeL():
             ]
             x["h_action"] = x["h_action"].unsqueeze(0).repeat((len(remaining_hands), 1))
 
-            policies = self.subgame.avg_strategy_table[node_idx]
-            policies = policies.view(-1, 8)
+            policy_slice = self.subgame.avg_strategy_table[node_idx]
+            policy_slice = policies.view(-1, 8)
 
             # encode policies for each hand
-            app_policies = []
+            policies = []
             for hand in remaining_hands:
-                app_policies.append(policies[encode_hand(hand)])
-            app_policies = torch.stack(app_policies).to(self.device)
-            app_policies = app_policies.view(-1, 8)
+                # set all policies that relate to the hand to 0
+                for card in hand:
+                    for i in range(52):
+                        if i == card: continue
+                        policy_slice[encode_hand([card, i])] = torch.zeros(8).to(self.device)
+                # reach_prob (N, ) * policy_slice (N, 8) -> (8, )
+                policy_to_add = (reach_prob * policy_slice).sum(dim=0)
+                policy_to_add /= policy_to_add.sum()
+                policies.append(policy_to_add)
+            policies = torch.stack(policies).to(self.device)
+            policies = policies.view(-1, 8)
             
             # add to dataset
-            M_Pi.append(x, app_policies)
+            M_Pi.extend(x, policies)
 
 
         # continue the rollout
         for i in range(len(nodes_to_visit)):
-            rollout_and_set_leaf_values(nodes_to_visit[i].state, player_idx, children_start + i, is_leaf=leaf_yn[i])
+            reach_prob_prime = reach_prob * self.subgame.avg_reach_strategy_table[node_idx][:, i]
+            reach_prob_prime /= reach_prob_prime.sum()
+            rollout_and_add_training_samples(nodes_to_visit[i].state, M_Pi, player_idx, children_start + i, is_leaf=leaf_yn[i])
 
     def sample_next_leaf_node(self, state: State, reach_prob, hand_idx, node_idx, epsilon: float, is_leaf: bool):
         if is_leaf: return node_idx, reach_prob
@@ -519,7 +529,7 @@ class ReBeL():
         M_Val.append(x, values)
         
         # collect policy
-        self.rollout_and_add_training_samples(state, M_Pi, 0, False)
+        self.rollout_and_add_training_samples(state, reach_prob, M_Pi, 0, False)
 
         # next belief state
         return self.subgame.nodes[next_node].state, next_reach_prob
