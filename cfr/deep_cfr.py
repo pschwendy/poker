@@ -1,7 +1,3 @@
-#############
-# TO COMMIT #
-#############
-
 # Deep Counterfactual Regret Minimization
 # Allow neural network to learn abstractions of the game through embeddings
 from typing import Any

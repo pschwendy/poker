@@ -1,5 +1,8 @@
+#############
+# TO COMMIT #
+#############
+
 # General network for arbitrary poker state
-# 
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -26,7 +29,7 @@ class CardEmbedding(nn.Module):
         return embs.view(B, num_cards, -1).sum(1)
 
 class ReBeLNet(nn.Module):
-    def __init__(self, n_card_types, n_bets, n_actions, dim=64):
+    def __init__(self, n_card_types, n_actions, dim=64):
         super(BrownNet, self).__init__()
         self.card_embeddings = nn.ModuleList(
             [CardEmbedding(dim) for _ in range(n_card_types)]
@@ -38,6 +41,7 @@ class ReBeLNet(nn.Module):
         
         # self.bet1 = nn.Linear(n_bets * 2, dim)
         # self.bet2 = nn.Linear(dim, dim)
+        # Use LSTM for bet history to allow for variable length
         self.bet = nn.LSTM(input_size=2, hidden_size=dim)
         
         self.comb1 = nn.Linear(2 * dim, dim)

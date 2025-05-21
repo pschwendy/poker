@@ -3,7 +3,8 @@
 #############
 
 # Adapted from ReBeL: Combining RL and CFR in Imperfect-Information Games
-# Python implementation of the ReBeL algorithm (highly inefficient, but it works lol)
+# Python implementation of the ReBeL algorithm w/ exploitative strategies 
+# (highly inefficient, but it should inevitably work lol)
 
 # Exploitation-based test-time fine-tuning with soft safety
 # Allow neural network to learn abstractions of the game through embeddings
@@ -18,9 +19,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from cfr.brown_net import BrownNet
-from cfr.dataset import ValueDataset
-from cfr.wprollout import WpRollout
+from rebel.rebel_net import ReBeLNet
+from rebel.dataset import ValueDataset, PolicyDataset
 from state.state_fhp import State
 from evaluation.card import Card
 from evaluation.evaluate import Evaluator
@@ -68,10 +68,14 @@ class Subgame():
         self.num_actions = 8 # 0: fold, 1: call, 2-7: raise
 
         self.regret_table = [torch.zeros((self.num_info_sets, self.num_actions))]
-        self.value_table = [torch.zeros((self.num_info_sets, self.num_actions))]
-        self.strategy_table = [torch.ones((self.num_info_sets, self.num_actions)) / self.num_actions]
+        self.value_table = [torch.zeros((self.num_info_sets))]
+        # known strategy for self, approximated strategy for opponent
+        self.strategy_table = [torch.ones((self.num_info_sets, self.num_actions)) / self.num_actions] # for solving subgame
+
+        # known strategy for self, known strategy for opponent
         self.avg_strategy_table = [torch.ones((self.num_info_sets, self.num_actions)) / self.num_actions]
-        self.opponent_turns = []
+        self.reach_strategy_table = [torch.ones((self.num_info_sets, self.num_actions)) / self.num_actions] # for calculating reach probabilities
+        self.player_turns = []
 
 class ReBeL():
     def __init__(self, 
@@ -84,7 +88,7 @@ class ReBeL():
     ):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.bot_hands = []
-        self.value_net = BrownNet(n_card_types=2, n_bets=7, n_actions=8, dim=64)
+        self.value_net = ReBeLNet(n_card_types=4, n_actions=8, dim=64)
         self.value_net.to(self.device)
         
         count = 0
@@ -235,18 +239,34 @@ class ReBeL():
 
     # TODO: actually have to use probabilitistic belief states :( to make downstream values dependent on strategy
     # or maybe not
-    def rollout_and_set_leaf_values(self, state: State, player_idx, node_idx, is_leaf):
+    def rollout_and_set_leaf_values(self, state: State, player_idx, reach_prob, node_idx, is_leaf):
         """
         Perform a rollout from the current state and set the leaf values
         """
         if state.is_terminal(): # find actual belief values, oh boy
+            if not self.bots[player_idx].play: return -state.bots[player_idx].total_bet
+            elif not self.bots[(player_idx + 1) % 2].play: return state.bots[player_idx + 1].total_bet
+
+            # array of winnings across hands
+            if self.win is not None: return self.win
+
+
             board = [Card(c) for c in state.table]
             known_cards = set(board)
             open_cards = list(set(range(52)) - known_cards)
             remaining_hands = list(itertools.combinations(open_cards, 2))
 
-            for i in range(len(remaining_hands)): # runs ~ 1070190 evaluations every time X(
-                win = self.win_vs_hand(board, i)
+            # runs ~ 1070190 evaluations once every self-play! X(
+            # Let's see how realistic this is
+            # If not, we can estimate via sampling remaining_hands assuming it is distributed under reach_prob
+            for i in range(len(remaining_hands)): 
+                # Utility of the hand vs. all other hands
+                self.win = self.win_vs_hand(board, i)
+
+                values[encode_hand(remaining_hands[i])] = np.dot(
+                    self.win, reach_prob
+                )
+
 
         if is_leaf:
             x = state.to_dict()
@@ -257,7 +277,7 @@ class ReBeL():
             x["h_action"] = x["h_action"].unsqueeze(0).repeat((len(self.hand_set), 1))
 
             values = self.value_net(x)
-            values = values.view(-1, 8)
+            values = values.squeeze() # (N, )
         
             board = [Card(c).encode() for c in state.table]
             for card in board: # max of 5 iters
@@ -265,34 +285,35 @@ class ReBeL():
                 for i in range(52): # 52 iterations
                     if i == card:
                         continue
-                    values[encode_hand([card, i])] = torch.zeros(8).to(self.device)
+                    values[encode_hand([card, i])] = 0
 
             self.subgame.value_table[node_idx] = values
             return
 
+        # setup batch
+        # predict and set public strategy estimate
+        # setup tables
+        # search child nodes
+        x = state.to_dict()
+        x["cards"] = [
+            torch.IntTensor(x["cards"]).unsqueeze(0).repeat((len(self.hand_set), 1)).to(self.device), 
+            torch.IntTensor(self.hand_set).to(self.device)
+        ]
+        x["h_action"] = x["h_action"].unsqueeze(0).repeat((len(self.hand_set), 1))
+
+        predicted_policy = self.predictor(x)
+        predicted_policy = values.view(-1, 8)
+    
+        board = [Card(c).encode() for c in state.table]
+        for card in board: # max of 5 iters
+            # use hand encoding to find all indecies containing the card
+            for i in range(52): # 52 iterations
+                if i == card:
+                    continue
+                predicted_policy[encode_hand([card, i])] = torch.zeros(8).to(self.device)
+        self.subgame.reach_strategy_table[node_idx] = predicted_policy
+
         if state.curr_player != player_idx:
-            # setup batch
-            # predict and set public strategy estimate
-            # setup tables
-            # search child nodes
-            x = state.to_dict()
-            x["cards"] = [
-                torch.IntTensor(x["cards"]).unsqueeze(0).repeat((len(self.hand_set), 1)).to(self.device), 
-                torch.IntTensor(self.hand_set).to(self.device)
-            ]
-            x["h_action"] = x["h_action"].unsqueeze(0).repeat((len(self.hand_set), 1))
-
-            predicted_policy = self.predictor(x)
-            predicted_policy = values.view(-1, 8)
-        
-            board = [Card(c).encode() for c in state.table]
-            for card in board: # max of 5 iters
-                # use hand encoding to find all indecies containing the card
-                for i in range(52): # 52 iterations
-                    if i == card:
-                        continue
-                    predicted_policy[encode_hand([card, i])] = torch.zeros(8).to(self.device)
-
             self.subgame.strategy_table[node_idx] = predicted_policy
 
         policy = self.aggregate_bets_func(state, self.subgame.strategy_table[node_idx])
@@ -311,30 +332,36 @@ class ReBeL():
         children_start = len(self.subgame.nodes)
         children_end = children_start + len(nodes_to_visit)
         self.subgame.nodes.extend(nodes_to_visit)
-        self.subgame.regret_table.extend([torch.zeros((self.subgame.num_info_sets, self.subgame.num_actions] * len(nodes_to_visit))
-        self.subgame.value_table.extend([torch.zeros((self.subgame.num_info_sets, self.subgame.num_actions] * len(nodes_to_visit))
-        self.subgame.strategy_table.extend([torch.ones((self.subgame.num_info_sets, self.subgame.num_actions] * len(nodes_to_visit))
-        self.subgame.avg_strategy_table.extend([torch.ones((self.subgame.num_info_sets, self.subgame.num_actions] * len(nodes_to_visit))
-
+        self.subgame.regret_table.extend([torch.zeros((self.subgame.num_info_sets, self.subgame.num_actions))] * len(nodes_to_visit))
+        self.subgame.value_table.extend([torch.zeros((self.subgame.num_info_sets))] * len(nodes_to_visit))
+        self.subgame.strategy_table.extend([torch.ones((self.subgame.num_info_sets, self.subgame.num_actions))] * len(nodes_to_visit))
+        self.subgame.avg_strategy_table.extend([torch.ones((self.subgame.num_info_sets, self.subgame.num_actions))] * len(nodes_to_visit))
         
         self.subgame.nodes[node_idx].update_children(children_start, children_end)
 
         if state.curr_player == player_idx:
-            self.subgame.opponent_turns.extend(np.arange(children_start, children_end).tolist())
+            self.subgame.player_turns.append(node_idx)
 
         # continue the rollout
+        action_taken = 0
         for i in range(len(nodes_to_visit)):
+            while policy.sum(dim=0)[action_taken] == 0:
+                action_taken += 1
+
+            reach_prob = reach_prob * self.subgame.avg_reach_strategy_table[node_idx][:, i]
+            reach_prob /= reach_prob.sum()
             rollout_and_set_leaf_values(nodes_to_visit[i].state, player_idx, children_start + i, is_leaf=leaf_yn[i])
 
+    # Should be fixed?
     def compute_ev_regret(self, state: State, node_idx, is_leaf):
         """
         Compute the expected value of the node
         """
         if is_leaf: # VT: (S), PT: (S, A) -> (S)
             # CHECK THIS WITH ORIGINAL REBEL
-            return (self.subgame.value_table[node_idx] * self.subgame.strategy_table[node_idx]).sum(dim=1)
+            return self.subgame.value_table[node_idx] # singular value for the node
         
-        policy = self.aggregate_bets_func(state, self.subgame.strategy_table[node_idx])
+        policy = self.aggregate_bets_func(state, self.subgame.avg_strategy_table[node_idx])
         nonzero_indices = torch.nonzero(policy.sum(dim=0)).squeeze()
 
         children_start = self.subgame.nodes[node_idx].children_start
@@ -350,17 +377,27 @@ class ReBeL():
             self.subgame.value_table[node_idx][action] = action_value
         
         # compute regret
-        self.subgame.regret_table[node_idx] += self.subgame.value_table[node_idx] - 
-            (self.subgame.avg_strategystrategy_table[node_idx] * self.subgame.value_table[node_idx]).sum(dim=1)
+        values = self.subgame.value_table[self.subgame.nodes[node_idx].children_start:self.subgame.nodes[node_idx].children_end]
+        # unavailable actions are before "all in" action
+        if values.shape[1] < 7:
+            values = torch.cat([values, torch.zeros((values.shape[0], 7 - values.shape[1])).to(self.device)], dim=0)
+        values = torch.cat([values, self.subgame.value_table[node_idx].unsqueeze(0)], dim=0).transpose(0, 1)
+        values = values.view(-1, 8)
+        self.subgame.regret_table[node_idx] += values - (self.subgame.avg_strategy_table[node_idx] * values).sum(dim=1).unsqueeze(1).repeat(8)
 
+    # Should be fixed?
     def regret_matching(self):
         """
         Perform regret matching on the regret table
         """
-        self.subgame.regret_table[self.subgame.opponent_turns] = self.subgame.strategy_table[self.subgame.opponent_turns]
+        # self.subgame.regret_table[self.subgame.opponent_turns] = self.subgame.strategy_table[self.subgame.opponent_turns]
         self.subgame.regret_table = F.relu(self.subgame.regret_table)
-        # Don't match opponent regret values
-        self.subgame.strategy_table = self.subgame.regret_table / self.subgame.regret_table.sum(dim=1, keepdim=True)
+        # Perform regret matching in reach probability table
+        self.subgame.reach_strategy_table = self.subgame.regret_table / self.subgame.regret_table.sum(dim=1, keepdim=True)
+        # Copy on't match opponent regret values
+        # We use strategy table ONLY for opponent, so we don't need to update it
+        # self.subgame.strategy_table[self.subgame.player_turns] = self.subgame.reach_strategy_table[self.subgame.player_turns]
+        # self.subgame.strategy_table = self.subgame.regret_table / self.subgame.regret_table.sum(dim=1, keepdim=True)
     
     def stack_tables(self):
         """
@@ -376,11 +413,8 @@ class ReBeL():
         """
         Perform a rollout from the current state and set the leaf values
         """
-        if state.is_terminal(): # find actual belief values, oh boy
-            return
-
-        if is_leaf:
-            return
+        if state.is_terminal(): return
+        if is_leaf: return
 
         policy = self.aggregate_bets_func(state, self.subgame.avg_strategy_table[node_idx])
         nodes_to_visit = [UnrolledTreeNode(state)] * torch.nonzero(policy.sum(dim=0)).shape[0]
@@ -398,23 +432,64 @@ class ReBeL():
         children_start = len(self.subgame.nodes)
         children_end = children_start + len(nodes_to_visit)
 
-        if state.curr_player == player_idx: # add to dataset
-            pass # TODO: finish
+        if state.curr_player == player_idx: # add to dataset ~ collect lots of data!
+            board = [Card(c) for c in state.table]
+            known_cards = set(board)
+            open_cards = list(set(range(52)) - known_cards)
+            remaining_hands = list(itertools.combinations(open_cards, 2))
+
+            x = state.to_dict()
+            x["cards"] = [
+                torch.IntTensor(x["cards"]).unsqueeze(0).repeat((len(remaining_hands), 1)).to(self.device), 
+                torch.IntTensor(remaining_hands).to(self.device)
+            ]
+            x["h_action"] = x["h_action"].unsqueeze(0).repeat((len(remaining_hands), 1))
+
+            policies = self.subgame.avg_strategy_table[node_idx]
+            policies = policies.view(-1, 8)
+
+            # encode policies for each hand
+            app_policies = []
+            for hand in remaining_hands:
+                app_policies.append(policies[encode_hand(hand)])
+            app_policies = torch.stack(app_policies).to(self.device)
+            app_policies = app_policies.view(-1, 8)
+            
+            # add to dataset
+            M_Pi.append(x, app_policies)
 
 
         # continue the rollout
         for i in range(len(nodes_to_visit)):
             rollout_and_set_leaf_values(nodes_to_visit[i].state, player_idx, children_start + i, is_leaf=leaf_yn[i])
 
+    def sample_next_leaf_node(self, state: State, reach_prob, hand_idx, node_idx, epsilon: float, is_leaf: bool):
+        if is_leaf: return node_idx, reach_prob
 
-    def self_play(self, state: State, T = 1000, M_Val, M_Pi):
+        policy = self.aggregate_bets_func(state, self.subgame.avg_strategy_table[node_idx, hand_idx])
+        nonzero_indices = torch.nonzero(policy).squeeze()
+
+        c = torch.rand(1).to(self.device)
+        if c < epsilon:
+            # sample uniformly
+            policy[nonzero_indices] = 1.0 / len(nonzero_indices)
+        
+        action = torch.distributions.Categorical(policy).sample()
+        s_prime = state.copy()
+
+        action = self.choice_to_action(s_prime, action)
+        leaf_yn = s_prime.update(action)
+        reach_prob = reach_prob * self.subgame.avg_strategy_table[node_idx][:, action]
+        return self.sample_next_leaf_node(s_prime, node_idx, epsilon, leaf_yn)
+
+    def self_play(self, state: State, reach_prob, M_Val, M_Pi):
         """
         Perform self-play on the current state
         """
         self.subgame = Subgame(state, 0)
 
         # Perform unrolling
-        self.rollout_and_set_leaf_values(state, 0, is_leaf=False)
+        self.rollout_and_set_leaf_values(state, reach_prob, 0, is_leaf=False)
         self.stack_tables()
 
         # Compute regret
@@ -422,14 +497,17 @@ class ReBeL():
 
         values = self.subgame.value_table[0]
 
+        t_sample = np.random.randint(1, T)
         for t in range(1, T):
+            if t == t_sample:
+                next_node, next_reach_prob = self.sample_next_leaf_node(state, reach_prob, 0, epsilon=0.1, is_leaf=False)
             # Perform regret matching
             self.regret_matching()
 
             # Compute regret
             self.compute_ev_regret(state, 0, is_leaf=False)
 
-            self.subgame.avg_strategy_table = (t/(t + 1)) * self.subgame.avg_strategy_table + (1/(t + 1)) * self.subgame.avg_strategy_table
+            self.subgame.avg_strategy_table = (t/(t + 1)) * self.subgame.avg_strategy_table + (1/(t + 1)) * self.subgame.reach_strategy_table
             values = (t/(t + 1)) * values + (1/(t + 1)) * self.subgame.value_table[0]
         
         x = state.to_dict()
@@ -443,6 +521,117 @@ class ReBeL():
         # collect policy
         self.rollout_and_add_training_samples(state, M_Pi, 0, False)
 
-        
+        # next belief state
+        return self.subgame.nodes[next_node].state, next_reach_prob
+
+    # TODO: get rid of timestep 
+    def optimize_value_net(self, M_Val: ValueDataset, T: int, steps: int, batch_size: int):
+        self.value_net = BrownNet(n_card_types=2, n_bets=7, n_actions=3, dim=64).to(self.device)
+        M_Vp.setup()
+        self.value_net.train()
+        step = 0
+        losses = []
+
+        loader = torch.utils.data.DataLoader(M_Vp, batch_size=batch_size, shuffle=True)
+
+        # Reinitialize optimizer
+        self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
+        criterion = torch.nn.MSELoss()
+        while True:
+            for x, target in loader:
+                self.optimizer.zero_grad()
+                values = self.value_net(x).squeeze()
+
+                loss = criterion(values.squeeze(), target.to(values.device))
+                losses.append(loss.item())
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.value_net.parameters(), 1.0)
+                self.optimizer.step()
+                step += 1
+                x["h_action"] = [h.cpu() for h in x["h_action"]]
+                target = target.cpu()
+                
+                if step >= steps: # BREAK!
+                    M_Vp.reset()
+                    return losses 
+    
+    def optimize_policy_net(self, M_Val: ValueDataset, T: int, steps: int, batch_size: int):
+        self.value_net = BrownNet(n_card_types=4, n_bets=7, n_actions=3, dim=64).to(self.device)
+        M_Vp.setup()
+        self.value_net.train()
+        step = 0
+        losses = []
+
+        loader = torch.utils.data.DataLoader(M_Vp, batch_size=batch_size, shuffle=True)
+
+        # Reinitialize optimizer
+        self.optimizer = torch.optim.Adam(self.value_net.parameters(), lr=1e-3)
+        criterion = KLDivLoss(reduction="batchmean") # Minimize divergence between policy and target policy distributions!
+        while True:
+            for x, target in loader:
+                self.optimizer.zero_grad()
+                values = self.value_net(x).squeeze()
+
+                loss = criterion(values.squeeze(), target.to(values.device))
+                losses.append(loss.item())
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(self.value_net.parameters(), 1.0)
+                self.optimizer.step()
+                step += 1
+                x["h_action"] = [h.cpu() for h in x["h_action"]]
+                target = target.cpu()
+                if step >= steps: 
+                    M_Vp.reset()
+                    return losses
+                    
+    def train(self, T: int, policy_interval: int, value_interval: int, steps: int, batch_size: int):
+        """
+        Train loop for ReBeL using self-play and periodic optimization
+        """
+
+        # Initialize datasets
+        M_Val = ValueDataset()
+        M_Pi = ValueDataset()
+
+        for i in range(T):
+            self.win = None
+
+            # Initialize state
+            state = State(self.num_players, self.start_money)
+            state.begin_round()
+
+            reach_prob = torch.ones(len(self.hand_set)).to(self.device)
+            reach_prob /= reach_prob.sum()
+
+            # Perform self-play
+            while not state.is_terminal():
+                state, reach_prob = self.self_play(state, reach_prob, M_Val, M_Pi)
+
+                # Make sure hands covered by board have reach prob 0
+                board = [Card(c).encode() for c in state.table]
+                for card in board:
+                    # use hand encoding to find all indecies containing the card
+                    for i in range(52):
+                        if i == card: continue
+                        reach_prob[encode_hand([card, i])] = 0
+                reach_prob /= reach_prob.sum()
+
+
+            if i % policy_interval == 0:
+                # Optimize policy network
+                losses = self.optimize_policy_net(M_Pi, T, steps, batch_size)
+                print(f"Policy network optimized at step {i} with loss {losses[-1]}")
+
+            if i % value_interval == 0:
+                # Optimize value network
+                losses = self.optimize_value_net(M_Val, T, steps, batch_size)
+                print(f"Value network optimized at step {i} with loss {losses[-1]}")
+            
+        # Save final model
+        self.save_checkpoint(T)
+        self.save_policy_net(T)
+
+        print("Training complete")
+        return losses
 
     
