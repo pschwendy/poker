@@ -74,10 +74,11 @@ class MiniState:
         - round
         - current player
     """
-    def __init__(self, table, players_left, n_players, max_round_size) -> None:
+    def __init__(self, table, players_left, n_players, max_round_size, poker_round) -> None:
         self.table = table # cards on table
 
         self.action_history = [] # List of Actions
+        self.round = poker_round
 
         self.n_players = n_players
         
@@ -93,13 +94,15 @@ class MiniState:
 
     def encode_single_action(self, action) -> np.array:
         """Encodes the action history (formatted for BrownNet)"""
-        if action.type == ActionType.FOLD: return np.array([0])
-        if action.type == ActionType.CALL: return np.array([0])
-        if action.type == ActionType.RAISE: return np.array([action.bet])
+        round_vec = [0, 0, 0, 0]
+        round_vec[self.round] = 1.
+        if action.type == ActionType.FOLD: return np.array([0] + round_vec)
+        if action.type == ActionType.CALL: return np.array([0] + round_vec)
+        if action.type == ActionType.RAISE: return np.array([action.bet] + round_vec)
             
     def encode_action(self) -> np.array:
         """Encodes the action history"""
-        return np.array([self.encode_single_action(action) for action in self.action_history] + [np.zeros(1) for _ in range(self.max_round_size - len(self.action_history))])
+        return np.array([self.encode_single_action(action) for action in self.action_history]) # + [np.zeros(1) for _ in range(self.max_round_size - len(self.action_history))])
 
     def update(self, action: Action, bots, curr_player, global_pot, blind=False) -> None:
         """Update the state of the game with the given action"""
@@ -147,7 +150,7 @@ class MiniState:
         build_str += f"Table: {self.table}\n"
         build_str += f"Action history: \n"
         for i, action in enumerate(self.action_history):
-            build_str += f"Player {(self.start_player + i) % self.total_players}: {bot.__str__()}\n"
+            build_str += f"Player {(i) % 2}: {action.__str__()}\n"
         
         return build_str
 
@@ -162,7 +165,7 @@ class State:
     """
     def __init__(self, 
         n_players=6,
-        num_rounds=2, # 2 for FHP
+        num_rounds=4, # 2 for FHP
         max_round_size=7 # 7 for FHP
     ) -> None:
         self.pot = 0
@@ -177,8 +180,8 @@ class State:
         self.bots = [BotState() for _ in range(n_players)]
 
         self.table = []
-        self.mini_states = [MiniState(self.table, self.active, self.total_players, self.max_round_size)]
         self.round = Round.PREFLOP
+        self.mini_states = [MiniState(self.table, self.active, self.total_players, self.max_round_size, self.round)]
         self.deck = Deck()
         self.deck.reset()
 
@@ -193,9 +196,13 @@ class State:
         self.pot += 100
 
         self.depth = 0
+        self.random_rollout = False
 
     def board_size(self):
         return self.num_rounds + 1
+
+    def toggle_random_rollout(self):
+        self.random_rollout = not self.random_rollout
 
     def finish_round(self):
         """Called at end of each round. Updates the pot and creates a new mini state"""
@@ -205,18 +212,21 @@ class State:
             return
 
         if self.round == Round.PREFLOP:
-            self.table = self.deck.deal(3)
+            self.table = list(self.deck.simulate_random_deal(3)) if self.random_rollout else self.deck.deal(3)
             self.round += 1
         elif self.round == Round.FLOP:
-            self.table += self.deck.deal(1)
+            if self.random_rollout: self.table += list(self.deck.simulate_random_deal(1))
+            else: self.table += self.deck.deal(1)
             self.round += 1
         elif self.round == Round.TURN:
-            self.table += self.deck.deal(1)
+            if self.random_rollout: self.table += list(self.deck.simulate_random_deal(1))
+            else: self.table += self.deck.deal(1)
             self.round += 1
 
-        self.mini_states.append(MiniState(self.table, self.active, self.total_players, self.max_round_size))
+        self.mini_states.append(MiniState(self.table, self.active, self.total_players, self.max_round_size, self.round))
             
         self.curr_player = self.start_player
+        # print(self.table)
 
     def deal_player(self):
         return self.deck.deal_one()
@@ -236,9 +246,11 @@ class State:
     def to_dict(self):
         device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
         encoded_actions = [torch.Tensor(mini_state.encode_action()).to(device) for mini_state in self.mini_states]
-        empty_actions = [torch.zeros(self.max_round_size, 1).to(device) for _ in range(self.num_rounds - len(self.mini_states))]
+        # print(encoded_actions)
+        # print(torch.cat(encoded_actions).view(-1, 5))
+        # empty_actions = [torch.zeros(self.max_round_size, 1).to(device) for _ in range(self.num_rounds - len(self.mini_states))]
         return {
-            "h_action": torch.stack(encoded_actions + empty_actions).view(-1),
+            "h_action": torch.cat(encoded_actions).view(-1, 5),
             # encode cards between 0-51, -1 for unknown
             "cards": [Card(c).encode() for c in self.table] + [-1 for _ in range(self.board_size() - len(self.table))],
         }
@@ -260,11 +272,13 @@ class State:
         self.pot += self.mini_states[-1].pot
         self.curr_player = (self.curr_player + 1) % self.total_players
 
+        # if self.end_round(): self.finish_round()
+
         self.depth += 1
 
-        # if self.end_round(): 
-        #     # self.finish_round()
-        #     return True
+        # if self.end_round() and self.mini_states[-1].action_history[-1].type == ActionType.RAISE:
+        #     self.print_history()
+
         return self.end_round()
 
     def round_to_str(self):
@@ -282,4 +296,5 @@ class State:
         
         build_str += f"Table: {self.table}\n"
         build_str += f"Top bet: {self.get_top_bet()}\n"
+        build_str += f"TERMINAL? {self.is_terminal()}"
         return build_str
