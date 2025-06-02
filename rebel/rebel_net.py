@@ -7,8 +7,6 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 
-from evaluation.card import Card
-
 class CardEmbedding(nn.Module):
     def __init__(self, dim):
         super(CardEmbedding, self).__init__()
@@ -30,7 +28,7 @@ class CardEmbedding(nn.Module):
 
 class ReBeLNet(nn.Module):
     def __init__(self, n_card_types, n_actions, dim=64):
-        super(BrownNet, self).__init__()
+        super(ReBeLNet, self).__init__()
         self.card_embeddings = nn.ModuleList(
             [CardEmbedding(dim) for _ in range(n_card_types)]
         )
@@ -42,7 +40,7 @@ class ReBeLNet(nn.Module):
         # self.bet1 = nn.Linear(n_bets * 2, dim)
         # self.bet2 = nn.Linear(dim, dim)
         # Use LSTM for bet history to allow for variable length
-        self.bet = nn.LSTM(input_size=2, hidden_size=dim)
+        self.bet = nn.LSTM(input_size=6, hidden_size=dim, batch_first=True)
         
         self.comb1 = nn.Linear(2 * dim, dim)
         self.comb2 = nn.Linear(dim, dim)
@@ -59,7 +57,7 @@ class ReBeLNet(nn.Module):
         """
         x : dict
             "cards" : ( (N x 2), (N x 3) [, (N x 1), (N x 1)] ) # (hole, board, [turn, river])
-            "bets" : N x n_bet_feats
+            "h_action" : N x n_bet_feats
         """
         cards = x["cards"]
         bets = x["h_action"].to(self.card1.weight.device) # scuffed
@@ -76,13 +74,13 @@ class ReBeLNet(nn.Module):
         x = F.relu(self.card3(x))
 
         bet_size = bets.clamp(min=0)
-        bets_occured = bets.ge(0).float()
-        bet_feats = torch.cat([bet_size, bets_occured], dim=-1)
-
+        bets_occured = bets[:, :, :1].ge(0).float()
+        bet_feats = torch.cat([bets_occured, bet_size], dim=-1)
+        
         # y = F.relu(self.bet1(bets))
         # y = F.relu(self.bet2(y) + y)
-        y, _ = self.bet(bets)
-        y = F.relu(y[=1]) # take last output
+        y, _ = self.bet(bet_feats)
+        y = F.relu(y[:, -1]) # take last output
 
         if y.dim() > 2: y = y.squeeze()
 
