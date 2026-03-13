@@ -57,6 +57,8 @@ Note: in our code, chance nodes (i.e. dealing cards) are handled by the state cl
 
 Theoretically, exploitability in a two-player zero-sum game (like heads-up poker) is defined as how much worse a strategy σ does versus its corresponding best response strategy BR(σ) compared to how a Nash equilibrium strategy σ∗ does against BR(σ∗). In practice, we can measure this as the sum of utilities of σ vs BR(σ) for each player p. That is u(σ1, BR(σ1)) + u(σ2, BR(σ2)), where u is the given utility function. We do this over a large number of repeated games utilizing the LocalBR algorithm to approximate BR(σ) [(Lisý et. al, 2016)](https://arxiv.org/abs/1612.07547). As in many papers, we measure exploitability in milli big blinds (mbb) / game. A milli big blind is 1/1000th of a big blind, so with a big blind of $100, winning $200 would be equivalent to winning 2000 mbb.
 
+For best practice, exploitability should be calculated by solving the game tree, but this is fairly expensive, and we believe (but could be wrong) that LocalBR provides a good enough approximation for the small game being played.
+
 ## Dependencies
 
 - pytorch (we use 2.4.1+cu121)
