@@ -1,6 +1,6 @@
 # poker
 
-This repository contains the code for training a deep reinforcement learning poker bot through self-play. The general algorithm generally follows Deep Counterfactual Regret Minimization [(Brown et. al, 2019)](https://arxiv.org/abs/1811.00164). This project, however, mainly serves as a proof of concept and playground for new ideas, so we take a few liberations from the original algorithm to save memory and compute time at the cost of performance (at least for now, more on this below). Currently, a value network (~50K parameters) trained under this scheme can achieve an exploitability in the range of 0-250 mbb/game, achieved at no cost ($0 spent).
+This repository contains the code for training a deep reinforcement learning poker bot through self-play. The general algorithm generally follows Deep Counterfactual Regret Minimization [(Brown et. al, 2019)](https://arxiv.org/abs/1811.00164). This project, however, mainly serves as a proof of concept and playground for new ideas, so we take a few liberations from the original algorithm to save memory and compute time at the cost of performance (at least for now, more on this below). Currently, a value network (~50K parameters) trained under this scheme can achieve an exploitability in the range of 0-100 mbb/game, achieved at no cost ($0 spent).
 
 
 ## Deep Counterfactual Regret Minimization
@@ -9,7 +9,7 @@ Deep Counterfactual Regret Minimization is an equilibrium-finding algorithm for 
 
 During each traversal, the goal is to collect action advantages **r_t(h)** for given states **h** into an ever-growing advantage set **M_Vp** (corresponding to player **p**). In between traversals, the parameters **θ_p** are trained from scratch using the collected datasets **M_Vp**. Both players also contribute to a global policy dataset **M_Pi**, which contains mappings from states to policies \(**h** -> **σ(h)**). Further details, including pseudocode, can be found in the original paper.
 
-To save on memory and time, we take the following liberties at the cost of perfomance:
+To save on memory and time, we take the following liberties at the cost of perfomance (and theoretic guarentees):
 - Train a single model with parameters θ to play against itself
 - Only collect M_V, not M_Pi
 - Utilize the most recently trained value network as our evaluation bot (Note: in theory, randomly sampling across all trained for each move value networks is the same as training on M_Pi. This shouldn't be too difficult to implement, but we haven't gotten to it yet) 
